@@ -73,6 +73,71 @@ void handleRoot() {
 }
 
 
+void handleMetrics() {
+	server.send(200, "text/plain", GenerateMetrics() );
+}
+
+void HandleNotFound() {
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  for (uint i = 0; i < server.args(); i++) {
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+  server.send(404, "text/html", message);
+}
+
+String GenerateMetrics() {
+  String message = "";
+  String idString = "{id=\"" + String(ESP.getChipId(),HEX) + "\",mac=\"" + WiFi.macAddress().c_str() + "\"}";
+
+  if (hasPM) {
+    int stat = ag.getPM2_Raw();
+
+    message += "# HELP pm02 Particulate Matter PM2.5 value\n";
+    message += "# TYPE pm02 gauge\n";
+    message += "pm02";
+    message += idString;
+    message += String(stat);
+    message += "\n";
+  }
+
+  if (hasCO2) {
+    int stat = ag.getCO2_Raw();
+
+    message += "# HELP rco2 CO2 value, in ppm\n";
+    message += "# TYPE rco2 gauge\n";
+    message += "rco2";
+    message += idString;
+    message += String(stat);
+    message += "\n";
+  }
+
+  if (hasSHT) {
+    TMP_RH stat = ag.periodicFetchData();
+
+    message += "# HELP atmp Temperature, in degrees Celsius\n";
+    message += "# TYPE atmp gauge\n";
+    message += "atmp";
+    message += idString;
+    message += String(stat.t);
+    message += "\n";
+
+    message += "# HELP rhum Relative humidtily, in percent\n";
+    message += "# TYPE rhum gauge\n";
+    message += "rhum";
+    message += idString;
+    message += String(stat.rh);
+    message += "\n";
+  }
+  return message;
+}
+
 void setup(){
 	Serial.begin(9600);
 
@@ -92,6 +157,8 @@ void setup(){
 	}
 
 	server.on("/", handleRoot);
+	server.on("/metrics", handleMetrics);
+	server.onNotFound(HandleNotFound);
 	server.begin();
 	Serial.println("HTTP server started");
 
