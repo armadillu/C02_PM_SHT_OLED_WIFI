@@ -55,7 +55,7 @@ boolean sendDataToServer=false;
 // change if you want to send the data to another server
 String APIROOT = "http://hw.airgradient.com/";
 
-int sleepMS = 250;
+int sleepMS = 1000;
 static int loopCount = 999999999;
 int sendDataIntervalMin = 5; //min - interval to send temp & humidity http updates to server
 int sensorBeingDisplayed = 0;
@@ -63,12 +63,11 @@ int sensorBeingDisplayed = 0;
 
 void handleRoot() {
 	digitalWrite(LED_BUILTIN, LOW); 
-	static char json[96];
-	
+	static char json[96];	
 	int PM2 = ag.getPM2_Raw();
 	int CO2 = ag.getCO2_Raw();
 	TMP_RH result = ag.periodicFetchData();	
-	sprintf(json, "{\"wifi\":%d, \"temp\":%.1f, \"hum\":%d, \"pm2\":%d, \"co2\":%d}", WiFi.RSSI(), result.t, result.rh, PM2, CO2);
+	sprintf(json, "{\"id\":\"%s\", \"wifi\":%d, \"temp\":%.1f, \"hum\":%d, \"pm2\":%d, \"co2\":%d}", String(ESP.getChipId(),HEX), WiFi.RSSI(), result.t, result.rh, PM2, CO2);
 	server.send(200, "application/json", json);
 	digitalWrite(LED_BUILTIN, HIGH);
 }
@@ -78,7 +77,7 @@ void setup(){
 	Serial.begin(9600);
 
 	display.init();
-	display.flipScreenVertically();
+	//display.flipScreenVertically();
 	showTextRectangle("Init", String(ESP.getChipId(),HEX),true);
 
 	if (hasPM) ag.PMS_Init();
@@ -92,14 +91,18 @@ void setup(){
 		Serial.println("MDNS responder started AirSensor");
 	}
 
-	MDNS.addService("http", "tcp", 80);
 	server.on("/", handleRoot);
 	server.begin();
 	Serial.println("HTTP server started");
+
+	MDNS.addService("http", "tcp", 80);
 }
+
 
 void loop(){
 
+	MDNS.update();
+	
 	delay(sleepMS); //once per second
 
 	// create payload
@@ -122,7 +125,8 @@ void loop(){
 		if (hasCO2 || hasPM) payload=payload+",";
 		TMP_RH result = ag.periodicFetchData();
 		payload=payload+"\"atmp\":" + String(result.t) +   ",\"rhum\":" + String(result.rh);
-		if(sensorBeingDisplayed == 2) showTextRectangle(String(result.t),String(result.rh)+"%",false);
+		if(sensorBeingDisplayed == 2) showTextRectangle("TMP", String(result.t,1)+"c",false);
+		if(sensorBeingDisplayed == 3) showTextRectangle("HUMI",String(result.rh)+"%",false);
 	}
 
 	payload = payload + "}";
@@ -151,7 +155,7 @@ void loop(){
 
 	//loop through displayed items
 	sensorBeingDisplayed++;
-	if(sensorBeingDisplayed > 2) sensorBeingDisplayed = 0;
+	if(sensorBeingDisplayed > 3) sensorBeingDisplayed = 0;
 
 	loopCount++;
 }
@@ -166,8 +170,10 @@ void showTextRectangle(String ln1, String ln2, boolean small) {
 	} else {
 		display.setFont(ArialMT_Plain_24);
 	}
-	display.drawString(32, 16, ln1);
-	display.drawString(32, 36, ln2);
+	int offset = 16; //flipped
+	offset = 0; 
+	display.drawString(31, offset, ln1);
+	display.drawString(31, offset + 20, ln2);
 	display.display();
 }
 
