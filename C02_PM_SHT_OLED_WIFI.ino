@@ -43,11 +43,6 @@ SSD1306Wire display(0x3c, SDA, SCL);
 ESP8266WebServer server(80);
 
 
-// set sensors that you do not use to false
-boolean hasPM=true;
-boolean hasCO2=true;
-boolean hasSHT=true;
-
 // set to true if you want to connect to wifi. The display will show values only when the sensor has wifi connection
 boolean connectWIFI=true;
 boolean sendDataToServer=false;
@@ -55,19 +50,30 @@ boolean sendDataToServer=false;
 // change if you want to send the data to another server
 String APIROOT = "http://hw.airgradient.com/";
 
-int sleepMS = 1000;
-static int loopCount = 999999999;
-int sendDataIntervalMin = 5; //min - interval to send temp & humidity http updates to server
-int sensorBeingDisplayed = 0;
+int sleepMS = 500; //ms
+
+int sensorUpdateInterval = 10000; //ms
+int sensorUpdateTimer= 0; //ms
+
+int sensorBeingDisplayed = 0; //index, [0..4]
+int sensorDisplayUpdateInterval = 2000; //ms
+int sensorDisplayTimer = sensorDisplayUpdateInterval * 2;
+
+//sensor data
+struct SensorData{
+	float temperature;
+	int humidity;
+	int pm2;
+	int co2;
+};
+
+SensorData data;
 
 
 void handleRoot() {
 	digitalWrite(LED_BUILTIN, LOW); 
 	static char json[96];	
-	int PM2 = ag.getPM2_Raw();
-	int CO2 = ag.getCO2_Raw();
-	TMP_RH result = ag.periodicFetchData();	
-	sprintf(json, "{\"id\":\"%s\", \"wifi\":%d, \"temp\":%.1f, \"hum\":%d, \"pm2\":%d, \"co2\":%d}", String(ESP.getChipId(),HEX), WiFi.RSSI(), result.t, result.rh, PM2, CO2);
+	sprintf(json, "{\"id\":\"%s\", \"wifi\":%d, \"temp\":%.1f, \"hum\":%d, \"pm2\":%d, \"co2\":%d}", String(ESP.getChipId(),HEX), WiFi.RSSI(), data.temperature, data.humidity, data.pm2, data.co2);
 	server.send(200, "application/json", json);
 	digitalWrite(LED_BUILTIN, HIGH);
 }
@@ -76,6 +82,7 @@ void handleRoot() {
 void handleMetrics() {
 	server.send(200, "text/plain", GenerateMetrics() );
 }
+
 
 void HandleNotFound() {
   String message = "File Not Found\n\n";
@@ -92,51 +99,42 @@ void HandleNotFound() {
   server.send(404, "text/html", message);
 }
 
+
 String GenerateMetrics() {
   String message = "";
   String idString = "{id=\"" + String(ESP.getChipId(),HEX) + "\",mac=\"" + WiFi.macAddress().c_str() + "\"}";
-
-  if (hasPM) {
-    int stat = ag.getPM2_Raw();
 
     message += "# HELP pm02 Particulate Matter PM2.5 value\n";
     message += "# TYPE pm02 gauge\n";
     message += "pm02";
     message += idString;
-    message += String(stat);
+    message += String(data.pm2);
     message += "\n";
-  }
-
-  if (hasCO2) {
-    int stat = ag.getCO2_Raw();
 
     message += "# HELP rco2 CO2 value, in ppm\n";
     message += "# TYPE rco2 gauge\n";
     message += "rco2";
     message += idString;
-    message += String(stat);
+    message += String(data.co2);
     message += "\n";
-  }
-
-  if (hasSHT) {
-    TMP_RH stat = ag.periodicFetchData();
 
     message += "# HELP atmp Temperature, in degrees Celsius\n";
     message += "# TYPE atmp gauge\n";
     message += "atmp";
     message += idString;
-    message += String(stat.t);
+    message += String(data.temperature);
     message += "\n";
 
     message += "# HELP rhum Relative humidtily, in percent\n";
     message += "# TYPE rhum gauge\n";
     message += "rhum";
     message += idString;
-    message += String(stat.rh);
+    message += String(data.humidity);
     message += "\n";
-  }
-  return message;
+    
+	return message;
 }
+
 
 void setup(){
 	Serial.begin(9600);
@@ -145,11 +143,16 @@ void setup(){
 	//display.flipScreenVertically();
 	showTextRectangle("Init", String(ESP.getChipId(),HEX),true);
 
-	if (hasPM) ag.PMS_Init();
-	if (hasCO2) ag.CO2_Init();
-	if (hasSHT) ag.TMP_RH_Init(0x44);
+	ag.PMS_Init();
+	ag.CO2_Init();
+	ag.TMP_RH_Init(0x44);
 
 	if (connectWIFI) connectToWifi();
+
+	String ssid = WiFi.SSID();
+	IPAddress ip = WiFi.localIP();
+	String ipstr = String(ip[0]) + "." + String(ip[1]) + "." + String(ip[2]) + "." + String(ip[3]);
+	showTextRectangle(ssid + "\nIP Addr", ipstr , true);
 	delay(2000);
 
 	if (MDNS.begin("AirSensor")) {
@@ -160,71 +163,54 @@ void setup(){
 	server.on("/metrics", handleMetrics);
 	server.onNotFound(HandleNotFound);
 	server.begin();
+	
 	Serial.println("HTTP server started");
-
 	MDNS.addService("http", "tcp", 80);
+	Serial.println("setup() ok!");
+
+	delay(1000);
+	updateSensorData();
 }
 
 
 void loop(){
 
+	delay(sleepMS); 
+	sensorUpdateTimer += sleepMS;
+	sensorDisplayTimer += sleepMS;
+
 	MDNS.update();
-	
-	delay(sleepMS); //once per second
-
-	// create payload
-	String payload = "{\"wifi\":" + String(WiFi.RSSI()) + ",";
-
-	if (hasPM) {
-		int PM2 = ag.getPM2_Raw();
-		payload=payload+"\"pm02\":" + String(PM2);
-		if(sensorBeingDisplayed == 0) showTextRectangle("PM2",String(PM2),false);
-	}
-
-	if (hasCO2) {
-		if (hasPM) payload=payload+",";
-		int CO2 = ag.getCO2_Raw();
-		payload=payload+"\"rco2\":" + String(CO2);
-		if(sensorBeingDisplayed == 1) showTextRectangle("CO2",String(CO2),false);
-	}
-
-	if (hasSHT) {
-		if (hasCO2 || hasPM) payload=payload+",";
-		TMP_RH result = ag.periodicFetchData();
-		payload=payload+"\"atmp\":" + String(result.t) +   ",\"rhum\":" + String(result.rh);
-		if(sensorBeingDisplayed == 2) showTextRectangle("TMP", String(result.t,1)+"c",false);
-		if(sensorBeingDisplayed == 3) showTextRectangle("HUMI",String(result.rh)+"%",false);
-	}
-
-	payload = payload + "}";
-
 	server.handleClient();
 
-	int maxLoopCount = sendDataIntervalMin * ( 1000 / sleepMS ) * ( 60 /* 1 min */ );
-	if (loopCount >= maxLoopCount) { //every ~sendDataIntervalMin minutes, ping server with data
-		if (connectWIFI && sendDataToServer){
-			Serial.println(payload);
-			String POSTURL = APIROOT + "sensors/airgradient:" + String(ESP.getChipId(),HEX) + "/measures";
-			Serial.println(POSTURL);
-
-			WiFiClient client;
-			HTTPClient http;
-			http.begin(client, POSTURL);
-			http.addHeader("content-type", "application/json");
-			int httpCode = http.POST(payload);
-			String response = http.getString();
-			Serial.println(httpCode);
-			Serial.println(response);
-			http.end();
-		}
-		loopCount = 1;
+	if(sensorUpdateTimer > sensorUpdateInterval){
+		sensorUpdateTimer  = 0;
+		updateSensorData();
 	}
 
-	//loop through displayed items
-	sensorBeingDisplayed++;
-	if(sensorBeingDisplayed > 3) sensorBeingDisplayed = 0;
+	
+	if(sensorDisplayTimer > sensorDisplayUpdateInterval){
+		sensorDisplayTimer = 0;
+		
+		//loop through displayed items
+		sensorBeingDisplayed++;
+		if(sensorBeingDisplayed > 3) sensorBeingDisplayed = 0;
 
-	loopCount++;
+		//display current sensor data index
+		if(sensorBeingDisplayed == 0) showTextRectangle("PM2",String(data.pm2),false);
+		if(sensorBeingDisplayed == 1) showTextRectangle("CO2",String(data.co2),false);
+		if(sensorBeingDisplayed == 2) showTextRectangle("TMP", String(data.temperature,1)+"c",false);
+		if(sensorBeingDisplayed == 3) showTextRectangle("HUMI",String(data.humidity)+"%",false);
+	}
+}
+
+void updateSensorData(){
+
+	Serial.println("updateSensorData()");
+	data.pm2 = ag.getPM2_Raw();
+	data.co2 = ag.getCO2_Raw();
+	TMP_RH result = ag.periodicFetchData();
+	data.temperature = result.t;
+	data.humidity = result.rh;
 }
 
 
@@ -232,15 +218,16 @@ void loop(){
 void showTextRectangle(String ln1, String ln2, boolean small) {
 	display.clear();
 	display.setTextAlignment(TEXT_ALIGN_LEFT);
+	int voffset = 0;
 	if (small) {
-		display.setFont(ArialMT_Plain_16);
+		display.setFont(ArialMT_Plain_10);
+		voffset = 25;
 	} else {
 		display.setFont(ArialMT_Plain_24);
+		voffset = 20;
 	}
-	int offset = 16; //flipped
-	offset = 0; 
-	display.drawString(31, offset, ln1);
-	display.drawString(31, offset + 20, ln2);
+	display.drawString(31, 0, ln1);
+	display.drawString(31, voffset, ln2);
 	display.display();
 }
 
