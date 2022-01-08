@@ -52,7 +52,7 @@ String APIROOT = "http://hw.airgradient.com/";
 
 int sleepMS = 500; //ms
 
-int sensorUpdateInterval = 10000; //ms
+int sensorUpdateInterval = 20000; //ms
 int sensorUpdateTimer= 0; //ms
 
 int sensorBeingDisplayed = 0; //index, [0..4]
@@ -206,8 +206,21 @@ void loop(){
 void updateSensorData(){
 
 	Serial.println("updateSensorData()");
-	data.pm2 = ag.getPM2_Raw();
-	data.co2 = ag.getCO2_Raw();
+	
+	int pm2 = ag.getPM2_Raw();
+	if(pm2 > 0){
+		data.pm2 = pm2;
+	}else{
+		Serial.println("bad pm2 reading! skipping!");
+	}
+	
+	int co2 = ag.getCO2_Raw();
+	if(co2 > 0){
+		data.co2 = co2;
+	}else{
+		Serial.println("bad c02 reading! skipping!");
+	}
+	
 	TMP_RH result = ag.periodicFetchData();
 	data.temperature = result.t;
 	data.humidity = result.rh;
