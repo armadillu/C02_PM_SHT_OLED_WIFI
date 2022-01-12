@@ -73,11 +73,18 @@ SensorData data;
 void handleRoot() {
 	digitalWrite(LED_BUILTIN, LOW); 
 	static char json[96];	
-	sprintf(json, "{\"id\":\"%s\", \"wifi\":%d, \"temp\":%.1f, \"hum\":%d, \"pm2\":%d, \"co2\":%d}", String(ESP.getChipId(),HEX), WiFi.RSSI(), data.temperature, data.humidity, data.pm2, data.co2);
+	sprintf(json, "{\"id\":\"%s\", \"wifi\":%d, \"temp\":%.2f, \"hum\":%d, \"pm2\":%d, \"co2\":%d}", String(ESP.getChipId(),HEX), WiFi.RSSI(), data.temperature, data.humidity, data.pm2, data.co2);
 	server.send(200, "application/json", json);
 	digitalWrite(LED_BUILTIN, HIGH);
 }
 
+void handleClimate() {
+	digitalWrite(LED_BUILTIN, LOW); 
+	static char json[64];
+	sprintf(json, "{\"temperature\":%.2f, \"humidity\":%d}", data.temperature, data.humidity);
+	server.send(200, "application/json", json);
+	digitalWrite(LED_BUILTIN, HIGH);
+}
 
 void handleMetrics() {
 	server.send(200, "text/plain", GenerateMetrics() );
@@ -161,6 +168,7 @@ void setup(){
 
 	server.on("/", handleRoot);
 	server.on("/metrics", handleMetrics);
+	server.on("/climate", handleClimate);
 	server.onNotFound(HandleNotFound);
 	server.begin();
 	
